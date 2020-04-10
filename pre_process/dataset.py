@@ -33,7 +33,7 @@ class Dataset(data.Dataset):
 
             # 随机打乱数据
             self.imgs = np.random.permutation(imgs)
-
+            print("read %d images" % (len(self.imgs)))
         if index == "train" or index == "val":
             self.transforms = T.Compose([
                 T.Resize(self.input_shape[1:]),
@@ -54,7 +54,7 @@ class Dataset(data.Dataset):
         if self.index == "train" or self.index == "val":
             img = Image.open(sample).convert('RGB')
             img = self.transforms(img)
-            splits = sample.split('/')[-1]
+            splits = sample.split(os.sep)[-1]
             label = int(splits.split('_')[1])
             label = torch.from_numpy(np.array(label))
             return img, label
@@ -65,3 +65,17 @@ class Dataset(data.Dataset):
 
     def __len__(self):
         return len(self.imgs)
+
+
+def get_dataset(arg, root, input_shape=(3, 112, 112), index="train"):
+    dataset = Dataset(root=root, index=index, input_shape=input_shape)
+    train_loader = data.DataLoader(dataset, batch_size=arg.train_batch_size)
+    return train_loader
+
+
+if __name__ == "__main__":
+    root = "/media/wyl/mul_face_detection/train_data"
+    dataset = Dataset(root=root, index="train", input_shape=(3, 112, 112))
+    train_loader = data.DataLoader(dataset, batch_size=64)
+    for i, (data, label) in enumerate(train_loader):
+        print(label.shape)

@@ -33,9 +33,9 @@ if __name__ == "__main__":
         data_len = len(data_list)
 
         if race == 'Caucasian':
-            val_num = int(data_len * 0.4)
+            val_num = int(data_len * 0.0)
         else:
-            val_num = int(data_len * 0.1)
+            val_num = int(data_len * 0.0)
 
         val_list = random.sample(data_list, val_num)
         train_list = list(set(data_list).difference(set(val_list)))
