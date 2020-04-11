@@ -5,15 +5,18 @@ __email__ = 'mattemail@foxmail.com'
 __copyright__ = 'Copyright @ 2020/4/9 15:19, matt '
 
 
+import os
 from visdom import Visdom
 import numpy as np
 import matplotlib.pyplot as plt
+import logging
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.autograd import Variable
 
+import config
 
 def count_time(prev_time, cur_time):
     h, reminder = divmod((cur_time-prev_time).seconds, 3600)
@@ -86,3 +89,43 @@ class Display_board:
 
     def show_heatmap(self, predict, title="test"):
         self.viz.heatmap(X=predict, opts=dict(title=title))
+
+
+def get_logger():
+    logger = logging.getLogger()
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s \t%(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+class get_visdom():
+    def __init__(self, env_name, port=8097):
+        self.viz = Display_board(env_name="train", port=port)
+        self.train_acc_win = self.viz.add_Line_windows(name="train_pixel_acc")
+        self.train_loss_win = self.viz.add_Line_windows(name="train_loss")
+        self.index = 0
+
+    def update(self, loss, acc):
+        self.viz.update_line(w=self.train_acc_win, Y=acc, X=self.index)
+        self.viz.update_line(w=self.train_loss_win, Y=loss, X=self.index)
+        self.index += 1
+
+
+def save_checkpoint(epoch, epochs_since_improvement, feature_net, metric_fc, optimizer, acc, is_best=False):
+    state = {
+        'epoch': epoch,
+        'epochs_since_improvement': epochs_since_improvement,
+        'acc': acc,
+        'feature_net': feature_net,
+        'metric_fc': metric_fc,
+        'optimizer': optimizer
+    }
+    if is_best:
+        filename = 'BEST_checkpoint.tar'
+    else:
+        filename = str(epoch) + 'checkpoint.tar'
+    save_path = os.path.join(config.checkpoint_path, filename)
+    torch.save(state, save_path)

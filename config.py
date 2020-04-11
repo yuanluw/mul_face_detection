@@ -14,12 +14,13 @@ image_w = 112
 image_h = 112
 channel = 3
 
-num_workers = 4
+num_workers = 8
 print_freq = 100
 grad_clip = 5.0
 
 num_classes = 16520
 data_path = "/media/wyl/mul_face_detection/train_data"
+checkpoint_path = '/home/wyl/codeFile/mul_face_detection/pre_train'
 
 emb_size = 512
 easy_margin = False

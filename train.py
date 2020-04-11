@@ -15,106 +15,109 @@ from torch.autograd import Variable
 from pre_process import get_dataset
 import model
 import config
-from utils import Display_board, FocalLoss, accuracy, count_time
+from utils import Display_board, FocalLoss, accuracy, count_time, get_logger, AverageMeter, get_visdom, save_checkpoint
 
 cur_path = os.path.abspath(os.path.dirname(__file__))
 
 
-def train(net, train_data, optimizer, criterion, arg):
-
-    feature_net = net[0]
-    metric_fc = net[1]
-    feature_net = feature_net.cuda()
-    metric_fc = metric_fc.cuda()
-    best_state_dict = 0
-
-    if arg.use_visdom:
-        viz = Display_board(env_name="train", port=arg.port)
-        train_acc_win = viz.add_Line_windows(name="train_pixel_acc")
-        train_loss_win = viz.add_Line_windows(name="train_loss")
-        train_y_axis = 0
-    print("start training: ", datetime.now())
-
-    for epoch in range(arg.epochs):
-        # train stage
-        train_loss = 0.0
-        train_acc = 0.0
-        feature_net = feature_net.train()
-        i = 0
-        if arg.use_visdom is not True:
-            prev_time = datetime.now()
-        for im, label in train_data:
-            i += 1  # train number
-            im = Variable(im.cuda())
-            label = Variable(label.cuda())
-
-            out = feature_net(im)
-            out = metric_fc(out, label)
-
-            loss = criterion(out, label)
-            # if hasattr(torch.cuda, "empty_cache"):
-            #   torch.cuda.empty_cache()
-            loss.backward()
-            optimizer.zero_grad()
-            nn.utils.clip_grad_norm_(feature_net.parameters(), config.grad_clip)
-            optimizer.step()
-
-            cur_loss = loss.item()
-            cur_acc = accuracy(out, label)
-            train_loss += cur_loss
-            train_acc += cur_acc
-
-            if i % config.print_freq == 0:
-                # visualize curve
-                if arg.use_visdom:
-                    train_y_axis += 1
-                    viz.update_line(w=train_acc_win, Y=cur_acc, X=train_y_axis)
-                    viz.update_line(w=train_loss_win, Y=cur_loss, X=train_y_axis)
-                else:
-                    now_time = datetime.now()
-                    time_str = count_time(prev_time, now_time)
-                    print("train: current (%d/%d) batch loss is %f pixel acc is %f time "
-                          "is %s" % (i, len(train_data), train_loss/i, train_acc/i, time_str))
-                    prev_time = now_time
-
-        print("train: the (%d/%d) epochs acc: %f loss: %f, cur time: %s" % (epoch,
-              arg.epochs, train_acc/i, train_loss/i, str(datetime.now())))
-
-        torch.save(best_state_dict, os.path.join(cur_path, "pre_train", str(arg.net + "_.pkl")))
-        torch.save(best_state_dict, os.path.join(cur_path, "pre_train", str(arg.net + "_.pkl")))
-
-    print("end time: ", datetime.now())
-    torch.save(best_state_dict, os.path.join(cur_path, "pre_train", str(arg.net + "end_.pkl")))
-    torch.save(best_state_dict, os.path.join(cur_path, "pre_train", str("metric_fc" + "end_.pkl")))
-
-
 def run(arg):
-    print("lr %f, epoch_num %d, decay_rate %f pre_train %d gamma %f" %
-          (arg.lr, arg.epochs, arg.decay, arg.pre_train, arg.gamma))
+    print("lr %f, epoch_num %d, decay_rate %f gamma %f" % (arg.lr, arg.epochs, arg.decay, arg.gamma))
+
+    start_epoch = 0
+    epochs_since_improvement = 0
 
     train_data = get_dataset(arg, config.data_path, index="train")
 
-    feature_net = model.get_model(arg.net)
+    if arg.checkpoint is None:
+        feature_net = model.get_model(arg.net)
+        metric_fc = model.ArcMarginModel(emb_size=config.emb_size, easy_margin=config.easy_margin, margin_m=config.margin_m,
+                                         margin_s=config.margin_s)
+        if arg.mul_gpu:
+            feature_net = nn.DataParallel(feature_net)
+            metric_fc = nn.DataParallel(metric_fc)
 
-    metric_fc = model.ArcMarginModel(emb_size=config.emb_size, easy_margin=config.easy_margin, margin_m=config.margin_m,
-                                     margin_s=config.margin_s)
-    if arg.mul_gpu:
-        feature_net = nn.DataParallel(feature_net)
-        metric_fc = nn.DataParallel(metric_fc)
+        if arg.optimizer == 'sgd':
+            optimizer = optim.SGD([{'params': feature_net.parameters()}, {'params': metric_fc.parameters()}],
+                                  lr=arg.lr, momentum=arg.momentum, weight_decay=arg.decay)
+        elif arg.optimizer == "adam":
+            optimizer = optim.Adam([{'params': feature_net.parameters()}, {'params': metric_fc.parameters()}],
+                                     lr=arg.lr, weight_decay=arg.decay)
+    else:
+        checkpoint = torch.load(os.path.join(config.checkpoint_path, arg.checkpoint))
+        start_epoch = checkpoint['epoch'] + 1
+        epochs_since_improvement = checkpoint['epochs_since_improvement']
+        feature_net = checkpoint['feature_net']
+        metric_fc = checkpoint['metric_fc']
+        optimizer = checkpoint['optimizer']
 
-    if arg.pre_train:
-        feature_net.load_state_dict(torch.load(os.path.join(cur_path, "pre_train", str(arg.net + "_.pkl"))))
-        metric_fc.load_state_dict(torch.load(os.path.join(cur_path, "pre_train", str("metric_fc" + "_.pkl"))))
+    feature_net = feature_net.to(config.device)
+    metric_fc = metric_fc.to(config.device)
 
-    print('Total params: %.2fM' % (sum(p.numel() for p in feature_net.parameters()) / 1000000.0))
-    optimizer = optim.Adam([{'params': feature_net.parameters()}, {'params': metric_fc.parameters()}],
-                                 lr=arg.lr, weight_decay=arg.decay)
-
+    logger = get_logger()
+    if arg.use_visdom:
+        vis = get_visdom(port=arg.port, env_name="mul_face_detection_train")
+    else:
+        vis = None
     if arg.use_focal_loss:
         criterion = FocalLoss(gamma=arg.gamma).to(config.device)
     else:
         criterion = nn.CrossEntropyLoss().to(config.device)
 
-    train((feature_net, metric_fc), train_data, optimizer, criterion, arg)
+    print('Total params: %.2fM' % (sum(p.numel() for p in feature_net.parameters()) / 1000000.0))
+    print("start training: ", datetime.now())
+    for epoch in range(start_epoch, arg.epochs):
+        prev_time = datetime.now()
+        train_loss, train_acc = train(train_data, feature_net, metric_fc, criterion, optimizer, epoch, logger, vis)
+        now_time = datetime.now()
+        time_str = count_time(prev_time, now_time)
+        print("train: current (%d/%d) batch loss is %f pixel acc is %f time "
+              "is %s" % (epoch, arg.epochs, train_loss, train_acc, time_str))
+
+        if epoch % 10 == 0:
+            save_checkpoint(epoch, epochs_since_improvement, feature_net, metric_fc, optimizer, train_acc, False)
+
+
+def train(train_data, feature_net, metric_fc, criterion, optimizer, epoch, logger, vis):
+    feature_net.train()
+    metric_fc.train()
+    losses = AverageMeter()
+    top1_accs = AverageMeter()
+
+    for i, (img, label) in enumerate(train_data):
+        img = img.to(config.device)
+        label = label.to(config.device)
+
+        feature = feature_net(img)
+        output = metric_fc(feature, label)
+
+        # calculate loss
+        loss = criterion(output, label)
+
+        # bp
+        optimizer.zero_grad()
+        loss.backward()
+
+        # clip gradient
+        nn.utils.clip_grad_norm_(feature_net.parameters(), config.grad_clip)
+        nn.utils.clip_grad_norm_(metric_fc.parameters(), config.grad_clip)
+
+        # update weights
+        optimizer.step()
+
+        # metrics track
+        losses.update(loss.item())
+        top1_accuracy = accuracy(output, label, 1)
+        top1_accs.update(top1_accuracy)
+
+        if i % config.print_freq == 0:
+            logger.info('Epoch: [{0}][{1}][{2}]\t'
+                        'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                        'Top1 accuracy {top1_accs.val:.3f} ({top1_accs.avg:.3f})'
+                        .format(epoch, i, len(train_data), loss=losses, top1_accs=top1_accs))
+            if vis is not None:
+                vis.update(losses.avg, top1_accs.avg)
+
+    return losses.avg, top1_accs.avg
+
 
 
