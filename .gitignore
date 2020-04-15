@@ -1,0 +1,5 @@
+!.gitignore
+*.pyc
+*.pth
+pre_train/
+*.csv

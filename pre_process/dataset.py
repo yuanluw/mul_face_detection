@@ -34,32 +34,33 @@ class Dataset(data.Dataset):
             # 随机打乱数据
             self.imgs = np.random.permutation(imgs)
             print("read %d images" % (len(self.imgs)))
+        normalize = T.Normalize(mean=[0.5], std=[0.5])
         if index == "train" or index == "val":
             self.transforms = T.Compose([
                 T.Resize(self.input_shape[1:]),
                 T.ColorJitter(brightness=0.125, contrast=0.125, saturation=0.125),
                 T.RandomHorizontalFlip(),
                 T.ToTensor(),
-                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                normalize
             ])
         else:
             self.transforms = T.Compose([
                 T.Resize(self.input_shape[1:]),
                 T.ToTensor(),
-                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                normalize
             ])
 
     def __getitem__(self, item):
         sample = self.imgs[item]
         if self.index == "train" or self.index == "val":
-            img = Image.open(sample).convert('RGB')
+            img = Image.open(sample).convert('L')
             img = self.transforms(img)
             splits = sample.split(os.sep)[-1]
             label = int(splits.split('_')[1])
             label = torch.from_numpy(np.array(label))
             return img, label
         else:
-            img = Image.open(sample).convert('RGB')
+            img = Image.open(sample).convert('L')
             img = self.transforms(img)
             return data
 

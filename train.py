@@ -6,6 +6,7 @@ __copyright__ = 'Copyright @ 2020/4/9 15:19, matt '
 
 import os
 from datetime import datetime
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -21,12 +22,14 @@ cur_path = os.path.abspath(os.path.dirname(__file__))
 
 
 def run(arg):
+    torch.manual_seed(7)
+    np.random.seed(7)
     print("lr %f, epoch_num %d, decay_rate %f gamma %f" % (arg.lr, arg.epochs, arg.decay, arg.gamma))
 
     start_epoch = 0
-    epochs_since_improvement = 0
 
-    train_data = get_dataset(arg, config.data_path, index="train")
+    train_data = get_dataset(arg, config.data_path, index="train",
+                             input_shape=(config.channel, config.image_h, config.image_w))
 
     if arg.checkpoint is None:
         feature_net = model.get_model(arg.net)
@@ -39,13 +42,14 @@ def run(arg):
         if arg.optimizer == 'sgd':
             optimizer = optim.SGD([{'params': feature_net.parameters()}, {'params': metric_fc.parameters()}],
                                   lr=arg.lr, momentum=arg.momentum, weight_decay=arg.decay)
+            scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=arg.lr_step, gamma=0.1)
         elif arg.optimizer == "adam":
             optimizer = optim.Adam([{'params': feature_net.parameters()}, {'params': metric_fc.parameters()}],
-                                     lr=arg.lr, weight_decay=arg.decay)
+                                      lr=arg.lr, weight_decay=arg.decay)
+
     else:
         checkpoint = torch.load(os.path.join(config.checkpoint_path, arg.checkpoint))
         start_epoch = checkpoint['epoch'] + 1
-        epochs_since_improvement = checkpoint['epochs_since_improvement']
         feature_net = checkpoint['feature_net']
         metric_fc = checkpoint['metric_fc']
         optimizer = checkpoint['optimizer']
@@ -72,9 +76,10 @@ def run(arg):
         time_str = count_time(prev_time, now_time)
         print("train: current (%d/%d) batch loss is %f pixel acc is %f time "
               "is %s" % (epoch, arg.epochs, train_loss, train_acc, time_str))
-
+        if arg.optimizer == "sgd":
+            scheduler.step()
         if epoch % 10 == 0:
-            save_checkpoint(epoch, epochs_since_improvement, feature_net, metric_fc, optimizer, train_acc, False)
+            save_checkpoint(epoch, feature_net, metric_fc, optimizer, train_acc, False)
 
 
 def train(train_data, feature_net, metric_fc, criterion, optimizer, epoch, logger, vis):
@@ -96,10 +101,6 @@ def train(train_data, feature_net, metric_fc, criterion, optimizer, epoch, logge
         # bp
         optimizer.zero_grad()
         loss.backward()
-
-        # clip gradient
-        nn.utils.clip_grad_norm_(feature_net.parameters(), config.grad_clip)
-        nn.utils.clip_grad_norm_(metric_fc.parameters(), config.grad_clip)
 
         # update weights
         optimizer.step()

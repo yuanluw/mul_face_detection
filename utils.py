@@ -114,10 +114,9 @@ class get_visdom():
         self.index += 1
 
 
-def save_checkpoint(epoch, epochs_since_improvement, feature_net, metric_fc, optimizer, acc, is_best=False):
+def save_checkpoint(epoch, feature_net, metric_fc, optimizer, acc, is_best=False):
     state = {
         'epoch': epoch,
-        'epochs_since_improvement': epochs_since_improvement,
         'acc': acc,
         'feature_net': feature_net,
         'metric_fc': metric_fc,
